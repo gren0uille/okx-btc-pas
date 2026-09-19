@@ -28,7 +28,7 @@ python scripts/build_report.py
 | `fig_05_first_load.png` | Первый запуск загрузчика: видно число полученных и добавленных строк. |
 | `fig_06_repeat_load.png` | Повторный запуск: `rows_added` равно нулю. Это доказательство идемпотентности — ключевой снимок для профиля УД. |
 | `fig_07_load_log.png` | Вывод `SELECT ... FROM load_log ORDER BY id;` со всеми запусками. |
-| `fig_08_tests.png` | Терминал с `pytest` и строкой `6 passed`. |
+| `fig_08_tests.png` | Терминал с `pytest` и строкой `23 passed`. |
 
 ## Практика 3
 
