@@ -1,11 +1,10 @@
 from datetime import date, datetime, timezone
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 
 from okx_btc_pas.ingestion import (
-    fetch_okx_candles, initialize_database, load_log, raw_cbr, raw_okx,
-    run_loader,
+    fetch_okx_candles, load_log, raw_cbr, raw_okx, run_loader,
 )
 
 
@@ -58,15 +57,6 @@ class FakeSession:
                     )
             return FakeResponse(content=f"<ValCurs ID='R01235'>{records}</ValCurs>".encode())
         raise AssertionError(f"Unexpected URL: {url}")
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite+pysqlite:///:memory:").execution_options(
-        schema_translate_map={"raw": None}
-    )
-    initialize_database(engine)
-    return engine
 
 
 def count(engine, table):

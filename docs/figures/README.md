@@ -30,6 +30,15 @@ python scripts/build_report.py
 | `fig_07_load_log.png` | Вывод `SELECT ... FROM load_log ORDER BY id;` со всеми запусками. |
 | `fig_08_tests.png` | Терминал с `pytest` и строкой `6 passed`. |
 
+## Практика 3
+
+| Файл | Что должно быть на снимке |
+|---|---|
+| `fig_09_quality_checks.png` | Вывод `SELECT check_name, passed, count(*) FROM data_quality_log GROUP BY 1,2;` — видно, что все проверки пройдены. |
+| `fig_10_build_layers.png` | Терминал с запуском `python -m okx_btc_pas.cleaning` и `python -m okx_btc_pas.mart` и их JSON-выводом. |
+| `fig_11_mart_structure.png` | Структура витрины: `\d mart.daily_market_mart` в psql. Видны группы полей — признаки и целевые. |
+| `fig_12_mart_row.png` | Одна строка витрины с заполненными признаками и целевыми значениями. |
+
 ## Требования к качеству
 
 - Снимайте **окно целиком**, чтобы была видна команда и её результат — проверяющий должен понимать, откуда взят вывод.
