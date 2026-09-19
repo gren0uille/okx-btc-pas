@@ -1,15 +1,12 @@
 """Regenerate the cumulative PAS report from the supplied title-page example.
 
-Add future practical work to CONTENT. The table of contents is paginated
-automatically through a preliminary render; no old page numbers are reused.
+Add future practical work to CONTENT. The table of contents is a native Word
+field: Word fills in headings and page numbers when the field is updated.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
-import subprocess
-import tempfile
 from pathlib import Path
 
 from docx import Document
@@ -20,15 +17,11 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
-from pypdf import PdfReader
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE = PROJECT_ROOT / "assets" / "title_template.docx"
 DEFAULT_OUTPUT = PROJECT_ROOT.parent / "Отчет_ПАС_Камалов_практики_1_2.docx"
-# LibreOffice converts the draft to PDF so that table-of-contents page numbers
-# can be measured instead of guessed.
-DEFAULT_RENDERER = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
 
 # The list is the content source for this report. Later practical work is added here.
 CONTENT = [
@@ -119,7 +112,8 @@ def set_font(run, size=None, bold=None, italic=None):
 
 
 def set_style(doc, name, size, *, bold=False, italic=False, first=0,
-              before=0, after=0, align=WD_ALIGN_PARAGRAPH.JUSTIFY, line=1.5):
+              before=0, after=0, align=WD_ALIGN_PARAGRAPH.JUSTIFY, line=1.5,
+              outline=None):
     s = doc.styles[name] if name in doc.styles else doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
     s.font.name = "Times New Roman"
     s.font.size = Pt(size)
@@ -137,6 +131,43 @@ def set_style(doc, name, size, *, bold=False, italic=False, first=0,
     fmt.keep_together = True
     if bold:
         fmt.keep_with_next = True
+    if outline is not None:
+        # Word's TOC field collects paragraphs by outline level, so the
+        # headings must declare one.
+        level = OxmlElement("w:outlineLvl")
+        level.set(qn("w:val"), str(outline))
+        s.element.get_or_add_pPr().append(level)
+
+
+def add_toc_field(doc):
+    """Insert Word's own TOC field over outline levels 1-2.
+
+    Word fills in the headings and page numbers itself when the field is
+    updated, so no external renderer is needed to measure pages.
+    """
+    paragraph = doc.add_paragraph(style="PAS TOC")
+    paragraph.paragraph_format.tab_stops.add_tab_stop(
+        Cm(16.6), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS
+    )
+    run = paragraph.add_run()
+
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    # \o "1-2" collects outline levels 1-2, \h makes entries clickable,
+    # \z and \u keep Word's own formatting of the field.
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = r'TOC \o "1-2" \h \z \u'
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    placeholder = OxmlElement("w:t")
+    placeholder.text = "Обновите поле: выделите всё (Cmd+A) и нажмите F9."
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+
+    for node in (begin, instruction, separate, placeholder, end):
+        run._r.append(node)
+    return paragraph
 
 
 def add_paragraph(doc, value, kind="Normal"):
@@ -216,8 +247,7 @@ def add_page_number(section):
     pg.set(qn("w:start"), "3")
 
 
-def render_report(template: Path, output: Path, group: str, teacher: str,
-                  pages: dict[str, int]):
+def render_report(template: Path, output: Path, group: str, teacher: str):
     doc = Document(template)
     body = doc._element.body
     for child in list(body)[16:-1]:
@@ -263,9 +293,9 @@ def render_report(template: Path, output: Path, group: str, teacher: str,
 
     set_style(doc, "Normal", 14, first=1.25)
     set_style(doc, "PAS H1", 18, bold=True, first=1.25, after=28.35,
-              align=WD_ALIGN_PARAGRAPH.LEFT)
+              align=WD_ALIGN_PARAGRAPH.LEFT, outline=0)
     set_style(doc, "PAS H2", 16, bold=True, first=1.25, before=42.55,
-              after=28.35, align=WD_ALIGN_PARAGRAPH.LEFT)
+              after=28.35, align=WD_ALIGN_PARAGRAPH.LEFT, outline=1)
     set_style(doc, "PAS Special", 18, bold=True, after=28.35,
               align=WD_ALIGN_PARAGRAPH.CENTER)
     set_style(doc, "PAS TOC", 14, line=1.2, align=WD_ALIGN_PARAGRAPH.LEFT)
@@ -276,15 +306,7 @@ def render_report(template: Path, output: Path, group: str, teacher: str,
 
     toc = add_paragraph(doc, "СОДЕРЖАНИЕ", "PAS Special")
     toc.paragraph_format.page_break_before = True
-    for kind, heading in CONTENT:
-        if kind not in {"h1", "h2"}:
-            continue
-        p = add_paragraph(doc, heading + "\t" + str(pages.get(heading, 0)), "PAS TOC")
-        if kind == "h2":
-            p.paragraph_format.left_indent = Cm(0.7)
-        p.paragraph_format.tab_stops.add_tab_stop(
-            Cm(16.6), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS
-        )
+    add_toc_field(doc)
 
     section = doc.add_section(WD_SECTION_START.NEW_PAGE)
     section.top_margin = Cm(2)
@@ -312,54 +334,19 @@ def render_report(template: Path, output: Path, group: str, teacher: str,
     doc.save(output)
 
 
-def page_map(pdf_path: Path) -> dict[str, int]:
-    reader = PdfReader(pdf_path)
-    result = {}
-    headings = [value for kind, value in CONTENT if kind in {"h1", "h2"}]
-    for number, page in enumerate(reader.pages, start=1):
-        if number <= 2:
-            continue
-        # PDF text extraction may insert spaces inside bold Cyrillic words.
-        text = re.sub(r"\s+", "", page.extract_text() or "").upper()
-        for heading in headings:
-            needle = re.sub(r"\s+", "", heading).upper()
-            if heading not in result and needle in text:
-                result[heading] = number
-    missing = set(headings) - set(result)
-    if missing:
-        raise RuntimeError(f"TOC headings not found in preliminary PDF: {sorted(missing)}")
-    return result
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--renderer", type=Path, default=DEFAULT_RENDERER)
     parser.add_argument("--group", default="")
     parser.add_argument("--teacher", default="")
     args = parser.parse_args()
     if not args.template.is_file():
-        parser.error(f"Title-page template not found: {args.template}")
-    with tempfile.TemporaryDirectory(prefix="pas_report_") as temporary:
-        temp = Path(temporary)
-        draft = temp / "draft.docx"
-        render_report(args.template, draft, args.group, args.teacher, {})
-        if args.renderer.exists():
-            subprocess.run(
-                [str(args.renderer), "--headless", "--convert-to", "pdf",
-                 "--outdir", str(temp / "render"), str(draft)],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            pages = page_map(temp / "render" / "draft.pdf")
-        else:
-            pages = {}
-            print(f"ВНИМАНИЕ: LibreOffice не найден ({args.renderer}).")
-            print("Документ собран, но номера страниц в содержании пустые.")
-            print("Обновите поле содержания в Word или задайте --renderer.")
-        render_report(args.template, args.output, args.group, args.teacher, pages)
-    print(args.output)
-    print("Страницы содержания:", pages or "не рассчитаны")
+        parser.error(f"Титульный лист не найден: {args.template}")
+    render_report(args.template, args.output, args.group, args.teacher)
+    print(f"Отчёт собран: {args.output}")
+    print("В Word обновите содержание: Cmd+A, затем F9.")
 
 
 if __name__ == "__main__":
