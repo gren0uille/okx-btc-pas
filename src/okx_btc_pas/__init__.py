@@ -1,4 +1,3 @@
-"""Educational forecasting and analytics system for MOEX BTC futures."""
+"""Прогнозно-аналитическая система для спотовой пары BTC/USDT на OKX."""
 
 __version__ = "0.1.0"
-

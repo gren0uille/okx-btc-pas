@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -24,12 +23,12 @@ from docx.shared import Cm, Pt, RGBColor
 from pypdf import PdfReader
 
 
-DEFAULT_TEMPLATE = Path("/Users/timurkamalov/Downloads/ПР1_КудзиевШД (1).docx")
-DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "Отчет_ПАС_Камалов_практики_1_2.docx"
-DEFAULT_RENDERER = Path(
-    "/Users/timurkamalov/.codex/plugins/cache/openai-primary-runtime/"
-    "documents/26.904.11930/skills/documents/render_docx.py"
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TEMPLATE = PROJECT_ROOT / "assets" / "title_template.docx"
+DEFAULT_OUTPUT = PROJECT_ROOT.parent / "Отчет_ПАС_Камалов_практики_1_2.docx"
+# LibreOffice converts the draft to PDF so that table-of-contents page numbers
+# can be measured instead of guessed.
+DEFAULT_RENDERER = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
 
 # The list is the content source for this report. Later practical work is added here.
 CONTENT = [
@@ -346,15 +345,21 @@ def main():
         temp = Path(temporary)
         draft = temp / "draft.docx"
         render_report(args.template, draft, args.group, args.teacher, {})
-        subprocess.run(
-            [sys.executable, str(args.renderer), str(draft),
-             "--output_dir", str(temp / "render"), "--emit_pdf"],
-            check=True, stdout=subprocess.DEVNULL,
-        )
-        pages = page_map(temp / "render" / "draft.pdf")
+        if args.renderer.exists():
+            subprocess.run(
+                [str(args.renderer), "--headless", "--convert-to", "pdf",
+                 "--outdir", str(temp / "render"), str(draft)],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            pages = page_map(temp / "render" / "draft.pdf")
+        else:
+            pages = {}
+            print(f"ВНИМАНИЕ: LibreOffice не найден ({args.renderer}).")
+            print("Документ собран, но номера страниц в содержании пустые.")
+            print("Обновите поле содержания в Word или задайте --renderer.")
         render_report(args.template, args.output, args.group, args.teacher, pages)
     print(args.output)
-    print("TOC pages:", pages)
+    print("Страницы содержания:", pages or "не рассчитаны")
 
 
 if __name__ == "__main__":
