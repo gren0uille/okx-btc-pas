@@ -23,6 +23,8 @@ INSTRUMENT_ID = "BTC-USDT"
 FIRST_OKX_DATE = date(2018, 1, 11)
 FIRST_CBR_DATE = date(2018, 1, 1)
 UTC_DAY_MS = 86_400_000
+# Storage layers, created in this order before any table is built.
+SCHEMAS = ("raw", "clean", "mart")
 metadata = MetaData()
 
 raw_okx = Table(
@@ -64,10 +66,15 @@ load_log = Table(
 
 
 def initialize_database(engine: Engine) -> None:
-    """Create the stage-two raw and load-log tables."""
+    """Create every schema and table the pipeline uses.
+
+    All layers share one metadata registry, so create_all builds the clean and
+    mart tables too. Their schemas must therefore exist before it runs.
+    """
     with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
-            conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
+            for schema in SCHEMAS:
+                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
     metadata.create_all(engine)
 
 

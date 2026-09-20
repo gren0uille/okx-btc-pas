@@ -16,7 +16,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Column, Date, DateTime, Integer, Numeric, Table, create_engine, delete,
-    select, text,
+    select,
 )
 from sqlalchemy.engine import Engine
 
@@ -103,10 +103,7 @@ def build_mart(engine: Engine, now: datetime | None = None) -> dict:
     """Rebuild the mart from the clean layer inside one transaction."""
     moment = now or datetime.now(timezone.utc)
 
-    with engine.begin() as conn:
-        if conn.dialect.name == "postgresql":
-            conn.execute(text("CREATE SCHEMA IF NOT EXISTS mart"))
-    metadata.create_all(engine)
+    initialize_database(engine)
 
     with engine.begin() as conn:
         candles = list(conn.execute(

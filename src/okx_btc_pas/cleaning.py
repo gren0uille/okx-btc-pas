@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, Integer, Numeric, String, Table, Text,
-    create_engine, delete, func, select, text,
+    create_engine, delete, func, select,
 )
 from sqlalchemy.engine import Connection, Engine
 
@@ -137,10 +137,7 @@ def build_clean(engine: Engine, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
     stats = {"okx_rows": 0, "okx_rejected": 0, "cbr_rows": 0, "cbr_rejected": 0}
 
-    with engine.begin() as conn:
-        if conn.dialect.name == "postgresql":
-            conn.execute(text("CREATE SCHEMA IF NOT EXISTS clean"))
-    metadata.create_all(engine)
+    initialize_database(engine)
 
     with engine.begin() as conn:
         conn.execute(delete(clean_okx))
