@@ -1,9 +1,7 @@
-"""Shared test database.
-
-PostgreSQL keeps raw, clean and mart in separate schemas, so two tables may
-share a name. SQLite has no schemas, but ATTACH gives the same separation in
-memory, which lets the tests exercise the real table definitions unchanged.
-"""
+# Общая тестовая база
+# В PostgreSQL raw, clean и mart лежат в разных схемах, поэтому две таблицы
+# могут называться одинаково. В SQLite схем нет, но ATTACH даёт такое же
+# разделение в памяти — тесты работают с настоящими определениями таблиц
 
 import pytest
 from sqlalchemy import create_engine, event

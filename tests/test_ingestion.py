@@ -8,11 +8,11 @@ from okx_btc_pas.ingestion import (
 )
 
 
-def stamp(day: int) -> str:
+def stamp(day):
     return str(int(datetime(2018, 1, day, tzinfo=timezone.utc).timestamp() * 1000))
 
 
-def candle(day: int, confirm: str = "1") -> list[str]:
+def candle(day, confirm="1"):
     return [stamp(day), "100", "110", "90", "105", "12.5", "1300", "1300", confirm]
 
 

@@ -12,7 +12,7 @@ NOW = datetime(2026, 9, 19, tzinfo=timezone.utc)
 
 
 class Row:
-    """Stands in for one raw candle when only validation is exercised."""
+    # Подменяет одну строку raw, когда нужна только проверка
 
     def __init__(self, **values):
         defaults = {

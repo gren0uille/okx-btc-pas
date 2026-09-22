@@ -1,11 +1,6 @@
-"""Clean layer: typed, validated daily rows built from the raw tables.
-
-Every rejected row is recorded in data_quality_log instead of being dropped
-silently, so the number of raw rows always equals the number of clean rows
-plus the number of logged rejections.
-"""
-
-from __future__ import annotations
+# Слой clean: типизированные и проверенные суточные строки из слоя raw
+# Отбракованная строка не исчезает молча, а попадает в data_quality_log:
+# строк в raw = строк в clean + зафиксированных отбраковок
 
 import argparse
 import json
@@ -17,13 +12,11 @@ from sqlalchemy import (
     Boolean, Column, Date, DateTime, Integer, Numeric, String, Table, Text,
     create_engine, delete, func, select,
 )
-from sqlalchemy.engine import Connection, Engine
-
 from .ingestion import initialize_database, metadata, raw_cbr, raw_okx
 
 
-# A daily candle outside this range is treated as impossible for BTC/USDT and
-# is rejected rather than quietly fed into the models.
+# Свеча за пределами диапазона считается невозможной для BTC/USDT
+# и отбраковывается, а не попадает в модель незаметно
 MIN_PRICE = Decimal("1")
 MAX_PRICE = Decimal("100000000")
 
@@ -62,8 +55,8 @@ data_quality_log = Table(
 )
 
 
-def _log(conn: Connection, moment: datetime, table_name: str, check: str,
-         check_type: str, key: str | None, passed: bool, details: str | None) -> None:
+# Пишем результат одной проверки в журнал качества
+def _log(conn, moment, table_name, check, check_type, key, passed, details):
     conn.execute(data_quality_log.insert().values(
         checked_at=moment, layer="clean", table_name=table_name,
         check_name=check, check_type=check_type, entity_key=key,
@@ -71,13 +64,10 @@ def _log(conn: Connection, moment: datetime, table_name: str, check: str,
     ))
 
 
-def validate_candle(row) -> list[tuple[str, str, str]]:
-    """Return the failed checks for one raw candle.
-
-    Each item is (check_name, check_type, details). An empty list means the
-    row may enter the clean layer.
-    """
-    problems: list[tuple[str, str, str]] = []
+# Возвращаем список непройденных проверок для одной свечи
+# Пустой список означает, что строка годится для слоя clean
+def validate_candle(row):
+    problems = []
     prices = {"open": row.open, "high": row.high, "low": row.low, "close": row.close}
 
     missing = [name for name, value in prices.items() if value is None]
@@ -113,9 +103,9 @@ def validate_candle(row) -> list[tuple[str, str, str]]:
     return problems
 
 
-def validate_rate(row) -> list[tuple[str, str, str]]:
-    """Return the failed checks for one raw CBR rate."""
-    problems: list[tuple[str, str, str]] = []
+# Возвращаем список непройденных проверок для одной записи курса
+def validate_rate(row):
+    problems = []
     if row.value is None or row.nominal is None:
         problems.append(("rate_not_null", "completeness", "пустой курс или номинал"))
         return problems
@@ -128,12 +118,10 @@ def validate_rate(row) -> list[tuple[str, str, str]]:
     return problems
 
 
-def build_clean(engine: Engine, now: datetime | None = None) -> dict:
-    """Rebuild the clean layer from raw and record every check result.
-
-    The layer is rebuilt in full inside one transaction: rerunning the step
-    leaves the same rows, which keeps the operation idempotent.
-    """
+# Перестраиваем слой clean из raw и пишем результаты всех проверок
+# Слой пересобирается целиком в одной транзакции, поэтому повторный
+# запуск даёт то же состояние таблиц
+def build_clean(engine, now=None):
     moment = now or datetime.now(timezone.utc)
     stats = {"okx_rows": 0, "okx_rejected": 0, "cbr_rows": 0, "cbr_rejected": 0}
 
@@ -185,12 +173,10 @@ def build_clean(engine: Engine, now: datetime | None = None) -> dict:
     return stats
 
 
-def check_calendar_gaps(conn: Connection, moment: datetime) -> dict:
-    """Report missing calendar dates in the clean candle series.
-
-    OKX trades every day, so a gap means data is missing rather than the
-    market being closed. The gap is logged but does not remove any row.
-    """
+# Ищем пропущенные календарные даты в ряде свечей
+# Биржа работает ежедневно, поэтому пропуск означает потерю данных,
+# а не выходной день. Строки при этом не удаляются
+def check_calendar_gaps(conn, moment):
     bounds = conn.execute(
         select(func.min(clean_okx.c.candle_date), func.max(clean_okx.c.candle_date))
     ).one()
@@ -209,11 +195,11 @@ def check_calendar_gaps(conn: Connection, moment: datetime) -> dict:
     return {"expected_days": expected, "missing_days": len(missing)}
 
 
-def _days(count: int) -> timedelta:
+def _days(count):
     return timedelta(days=count)
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
     database_url = os.environ.get("DATABASE_URL")

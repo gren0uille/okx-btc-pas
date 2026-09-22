@@ -1,6 +1,5 @@
-"""Incremental raw loaders for OKX BTC-USDT candles and CBR USD/RUB rates."""
-
-from __future__ import annotations
+# Загрузчики слоя raw: суточные свечи OKX и курс USD/RUB Банка России
+# Повторный запуск догружает только новые даты
 
 import argparse
 import json
@@ -9,13 +8,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from xml.etree import ElementTree
 
-import requests
 from sqlalchemy import (
     Column, Date, DateTime, Integer, MetaData, Numeric, String, Table, Text,
     create_engine, func, select, text,
 )
-from sqlalchemy.engine import Connection, Engine
-
 from .source_probe import CBR_DYNAMIC_URL, OKX_HISTORY_URL, build_session
 
 
@@ -23,7 +19,7 @@ INSTRUMENT_ID = "BTC-USDT"
 FIRST_OKX_DATE = date(2018, 1, 11)
 FIRST_CBR_DATE = date(2018, 1, 1)
 UTC_DAY_MS = 86_400_000
-# Storage layers, created in this order before any table is built.
+# Слои хранения: схемы создаются до того, как строятся таблицы
 SCHEMAS = ("raw", "clean", "mart")
 metadata = MetaData()
 
@@ -65,12 +61,10 @@ load_log = Table(
 )
 
 
-def initialize_database(engine: Engine) -> None:
-    """Create every schema and table the pipeline uses.
-
-    All layers share one metadata registry, so create_all builds the clean and
-    mart tables too. Their schemas must therefore exist before it runs.
-    """
+# Создаём все схемы и таблицы конвейера
+# Слои используют общий реестр metadata, поэтому create_all строит
+# таблицы clean и mart тоже — их схемы должны существовать заранее
+def initialize_database(engine):
     with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             for schema in SCHEMAS:
@@ -78,7 +72,8 @@ def initialize_database(engine: Engine) -> None:
     metadata.create_all(engine)
 
 
-def _insert_new(conn: Connection, table: Table, values: dict) -> bool:
+# Вставляем строку, пропуская конфликт по уникальному ключу
+def _insert_new(conn, table, values):
     if conn.dialect.name == "postgresql":
         from sqlalchemy.dialects.postgresql import insert
     elif conn.dialect.name == "sqlite":
@@ -89,11 +84,11 @@ def _insert_new(conn: Connection, table: Table, values: dict) -> bool:
     return bool(result.rowcount)
 
 
-def _utc_ms(day: date) -> int:
+def _utc_ms(day):
     return int(datetime.combine(day, time.min, timezone.utc).timestamp() * 1000)
 
 
-def _candle_date(row: list[str]) -> date:
+def _candle_date(row):
     if len(row) != 9:
         raise ValueError("OKX candle must have nine fields")
     stamp = int(row[0])
@@ -102,15 +97,13 @@ def _candle_date(row: list[str]) -> date:
     return datetime.fromtimestamp(stamp / 1000, timezone.utc).date()
 
 
-def fetch_okx_candles(
-    session: requests.Session, start: date, end: date
-) -> list[list[str]]:
-    """Page backwards from end, retaining only the requested UTC dates."""
+# Читаем историю страницами назад, оставляя только нужные даты
+def fetch_okx_candles(session, start, end):
     if start > end:
         return []
     cursor = _utc_ms(end + timedelta(days=1))
     start_ms = _utc_ms(start)
-    result: list[list[str]] = []
+    result = []
     for _ in range(1000):
         response = session.get(
             OKX_HISTORY_URL,
@@ -138,11 +131,9 @@ def fetch_okx_candles(
     return result
 
 
-def fetch_cbr_rates(
-    session: requests.Session, start: date, end: date
-) -> list[tuple[dict, str]]:
-    """Use bounded date windows so the first historical load is reliable."""
-    result: list[tuple[dict, str]] = []
+# Курс запрашиваем годовыми окнами: полная история одним запросом ненадёжна
+def fetch_cbr_rates(session, start, end):
+    result = []
     cursor = start
     while cursor <= end:
         window_end = min(end, cursor + timedelta(days=364))
@@ -165,11 +156,8 @@ def fetch_cbr_rates(
     return result
 
 
-def run_loader(
-    engine: Engine, source: str, session: requests.Session | None = None,
-    end: date | None = None,
-) -> dict:
-    """Store new complete days transactionally and log success or failure."""
+# Сохраняем новые завершённые сутки в одной транзакции и пишем итог в журнал
+def run_loader(engine, source, session=None, end=None):
     if source not in {"okx", "cbr"}:
         raise ValueError("source must be okx or cbr")
     session = session or build_session()
@@ -242,7 +230,7 @@ def run_loader(
     return result
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", choices=["okx", "cbr", "all"], default="all")
     parser.add_argument("--end", type=date.fromisoformat)

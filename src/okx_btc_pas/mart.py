@@ -1,30 +1,23 @@
-"""Mart layer: one row per UTC day with features and forecast targets.
-
-The row for day d holds features known once day d has closed, and targets
-taken from day d+1. A model trained on this table therefore predicts the next
-day from today's information only.
-"""
-
-from __future__ import annotations
+# Витрина mart: одна строка на сутки UTC с признаками и целевыми значениями
+# В строке дня d лежат признаки, известные на конец этого дня, и цели,
+# взятые из дня d+1. Модель на такой таблице предсказывает завтра по сегодня
 
 import argparse
 import json
 import math
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
     Column, Date, DateTime, Integer, Numeric, Table, create_engine, delete,
     select,
 )
-from sqlalchemy.engine import Engine
-
 from .cleaning import clean_cbr, clean_okx
 from .ingestion import initialize_database, metadata
 
 
-# Parkinson's daily volatility estimator: |ln(high/low)| / (2*sqrt(ln 2)).
+# Оценка волатильности Паркинсона: |ln(high/low)| / (2*sqrt(ln 2))
 PARKINSON_SCALE = 2 * math.sqrt(math.log(2))
 LAGS = (1, 2, 3, 7)
 WINDOWS = (7, 30)
@@ -33,7 +26,7 @@ daily_mart = Table(
     "daily_market_mart", metadata,
     Column("candle_date", Date, primary_key=True),
 
-    # Features: everything below is known once candle_date has closed.
+    # Признаки: всё ниже известно после закрытия суток candle_date
     Column("volume_btc", Numeric(28, 8), nullable=False),
     Column("volatility_pk", Numeric(20, 10), nullable=False),
     Column("close", Numeric(24, 8), nullable=False),
@@ -55,11 +48,11 @@ daily_mart = Table(
     Column("volatility_mean_7", Numeric(20, 10)),
     Column("volatility_mean_30", Numeric(20, 10)),
 
-    # External factor: the latest CBR rate dated no later than candle_date.
+    # Внешний фактор: последний курс ЦБ с датой не позже candle_date
     Column("usd_rub", Numeric(20, 6)),
     Column("usd_rub_age_days", Integer),
 
-    # Targets: taken from candle_date + 1 and never used as features.
+    # Целевые значения: берутся из candle_date + 1, признаками не служат
     Column("target_volume_btc", Numeric(28, 8)),
     Column("target_volatility_pk", Numeric(20, 10)),
 
@@ -68,26 +61,24 @@ daily_mart = Table(
 )
 
 
-def parkinson(high: Decimal, low: Decimal) -> Decimal:
-    """Daily volatility from the high-low range of one candle."""
+# Считаем дневную волатильность по максимуму и минимуму одной свечи
+def parkinson(high, low):
     if high <= 0 or low <= 0:
         raise ValueError("Цены должны быть положительными")
     return Decimal(str(abs(math.log(float(high) / float(low))) / PARKINSON_SCALE))
 
 
-def _mean(values: list[Decimal | None]) -> Decimal | None:
+def _mean(values):
     present = [v for v in values if v is not None]
     if not present:
         return None
     return sum(present) / len(present)
 
 
-def _rate_lookup(rates: list[tuple[date, Decimal]], day: date):
-    """Latest rate dated no later than day, with its age in days.
-
-    Looking forward would leak information the forecaster cannot have, so the
-    search only ever walks backwards.
-    """
+# Берём последний курс с датой не позже day и его возраст в днях
+# Поиск идёт только назад: заглядывание вперёд дало бы модели
+# сведения, которых в момент прогноза не существует
+def _rate_lookup(rates, day):
     chosen = None
     for rate_date, value in rates:
         if rate_date <= day:
@@ -99,8 +90,8 @@ def _rate_lookup(rates: list[tuple[date, Decimal]], day: date):
     return chosen[1], (day - chosen[0]).days
 
 
-def build_mart(engine: Engine, now: datetime | None = None) -> dict:
-    """Rebuild the mart from the clean layer inside one transaction."""
+# Перестраиваем витрину из слоя clean в одной транзакции
+def build_mart(engine, now=None):
     moment = now or datetime.now(timezone.utc)
 
     initialize_database(engine)
@@ -152,8 +143,8 @@ def build_mart(engine: Engine, now: datetime | None = None) -> dict:
                 values[f"volume_lag_{lag}"] = volumes[j] if j >= 0 else None
                 values[f"volatility_lag_{lag}"] = volatilities[j] if j >= 0 else None
 
-            # Windows end at the previous day: including today's own value
-            # would let the mean carry information about the current row.
+            # Окно заканчивается предыдущим днём: включение сегодняшнего
+            # значения дало бы среднему сведения о текущей строке
             for window in WINDOWS:
                 start = max(0, i - window)
                 values[f"volume_mean_{window}"] = _mean(volumes[start:i])
@@ -180,7 +171,7 @@ def build_mart(engine: Engine, now: datetime | None = None) -> dict:
             "rows_with_rate": with_rate}
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
     database_url = os.environ.get("DATABASE_URL")

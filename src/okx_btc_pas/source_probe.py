@@ -1,11 +1,10 @@
-"""Read-only diagnostic of the two public source formats."""
-
-from __future__ import annotations
+# Диагностика источников: смотрим, что отдают OKX и Банк России
+# В базу ничего не пишется, только чтение
 
 import argparse
 import json
 import warnings
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree
 
 import requests
@@ -17,7 +16,8 @@ OKX_HISTORY_URL = "https://www.okx.com/api/v5/market/history-candles"
 CBR_DYNAMIC_URL = "https://www.cbr.ru/scripts/XML_dynamic.asp"
 
 
-def build_session() -> requests.Session:
+# Готовим сессию с повтором запросов при временных сбоях
+def build_session():
     session = requests.Session()
     retry = Retry(
         total=3, backoff_factor=1,
@@ -29,7 +29,8 @@ def build_session() -> requests.Session:
     return session
 
 
-def parse_cbr_xml(content: bytes) -> list[dict[str, str]]:
+# Разбираем XML Банка России в список словарей
+def parse_cbr_xml(content):
     root = ElementTree.fromstring(content)
     if root.attrib.get("ID") != "R01235":
         raise ValueError("CBR response is not USD/RUB")
@@ -41,7 +42,8 @@ def parse_cbr_xml(content: bytes) -> list[dict[str, str]]:
     return rows
 
 
-def probe_sources(days: int, *, verify_ssl: bool = True) -> dict:
+# Запрашиваем оба источника и возвращаем сводку по составу полей
+def probe_sources(days, *, verify_ssl=True):
     session = build_session()
     session.verify = verify_ssl
     if not verify_ssl:
@@ -88,7 +90,7 @@ def probe_sources(days: int, *, verify_ssl: bool = True) -> dict:
     }
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--insecure", action="store_true",

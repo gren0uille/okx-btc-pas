@@ -65,7 +65,7 @@ def test_lags_and_windows_exclude_the_current_day(db):
 
 
 def test_no_target_leaks_into_features(db):
-    """The features of day d must never equal day d+1 values by construction."""
+    # Признаки дня d по построению не должны совпадать со значениями дня d+1
     with db.begin() as conn:
         add_candle(conn, 1, Decimal("10"))
         add_candle(conn, 2, Decimal("999"))
