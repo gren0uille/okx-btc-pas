@@ -1,32 +1,45 @@
 # okx-btc-pas
 
-Прогноз объёма торгов и волатильности BTC/USDT на OKX.
+Прогноз объёма торгов и волатильности BTC/USDT на OKX на следующие сутки.
 
 ## Запуск
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-
-cp .env.example .env          # задать пароль
-docker compose up -d db
-docker compose run --rm loader
-docker compose run --rm loader python -m okx_btc_pas.cleaning
-docker compose run --rm loader python -m okx_btc_pas.mart
+cp .env.example .env      # задать пароли и ключ
+docker compose up -d
 ```
 
-## Состав
+Первый запуск загружает историю с 2018 года и строит дашборды (около 5 минут).
+Superset: http://localhost:8088, логин и пароль — из `.env`.
+Дальше конвейер запускается сам ежедневно в 00:30 UTC.
+
+## Архитектура
 
 ```
-src/okx_btc_pas/
-  source_probe.py   диагностика источников
-  ingestion.py      загрузка в слой raw
-  cleaning.py       слой clean, проверки качества
-  mart.py           витрина mart
-tests/              автоматические тесты
-docs/               постановка задачи
+OKX (JSON) ─────┐
+ЦБ РФ (XML) ────┤                                     ┌─► модели ─► mart.forecast ─┐
+alternative.me ─┼─► raw ─► clean ─► проверки ─► mart ─┤                            ├─► Superset
+FRED (CSV) ─────┘    │       │      качества          └─► представления ◄──────────┘
+                     └─► hist (версии значений)    meta: каталог, происхождение, журналы
 ```
 
-Источники: OKX (суточные свечи BTC/USDT) и Банк России (курс USD/RUB).
-СУБД: PostgreSQL 16 в Docker, схемы `raw`, `clean`, `mart`.
+| Слой | Назначение |
+|---|---|
+| raw | данные источников без изменений, с исходным ответом |
+| clean | строки, прошедшие проверки; отбраковка пишется в журнал |
+| mart | витрина признаков и целей, прогнозы, метрики моделей |
+| hist | версии пересматриваемых значений (SCD Type 2) |
+| meta | каталог наборов, происхождение данных, запуски, миграции |
+
+## Стек
+
+Python 3.13, PostgreSQL 16, SQLAlchemy, pandas, scikit-learn, Apache Superset 4.1, Docker Compose.
+
+## Команды
+
+```bash
+docker compose run --rm pipeline python -m okx_btc_pas.pipeline      # запуск вручную
+docker compose run --rm pipeline python -m okx_btc_pas.lineage \
+  --metric volatility --date 2026-09-18                               # происхождение показателя
+python -m pytest                                                      # тесты
+```
