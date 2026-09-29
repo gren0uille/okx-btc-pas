@@ -139,4 +139,7 @@ def test_rebuild_is_idempotent(db):
     first = build_mart(db, now=NOW)
     second = build_mart(db, now=NOW)
 
-    assert first == second == {"rows": 2, "rows_with_target": 1, "rows_with_rate": 0}
+    assert first == second
+    assert first["rows"] == 2
+    assert first["rows_with_target"] == 1
+    assert first["rows_with_rate"] == 0

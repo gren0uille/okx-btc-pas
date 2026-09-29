@@ -1,14 +1,15 @@
 # Общая тестовая база
-# В PostgreSQL raw, clean и mart лежат в разных схемах, поэтому две таблицы
-# могут называться одинаково. В SQLite схем нет, но ATTACH даёт такое же
+# В PostgreSQL слои лежат в разных схемах, поэтому две таблицы могут
+# называться одинаково. В SQLite схем нет, но ATTACH даёт такое же
 # разделение в памяти — тесты работают с настоящими определениями таблиц
 
 import pytest
 from sqlalchemy import create_engine, event
 
-from okx_btc_pas.ingestion import initialize_database
-
-SCHEMAS = ("raw", "clean", "mart")
+import okx_btc_pas.cleaning  # noqa: F401  регистрирует таблицы слоя clean
+import okx_btc_pas.history  # noqa: F401
+import okx_btc_pas.mart  # noqa: F401
+from okx_btc_pas.db import SCHEMAS, initialize_database
 
 
 @pytest.fixture

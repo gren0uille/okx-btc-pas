@@ -3,6 +3,7 @@
 # взятые из дня d+1. Модель на такой таблице предсказывает завтра по сегодня
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -13,7 +14,7 @@ from sqlalchemy import (
     Column, Date, DateTime, Integer, Numeric, Table, create_engine, delete,
     select,
 )
-from .cleaning import clean_cbr, clean_okx
+from .cleaning import clean_cbr, clean_fng, clean_fred, clean_okx
 from .ingestion import initialize_database, metadata
 
 
@@ -48,9 +49,14 @@ daily_mart = Table(
     Column("volatility_mean_7", Numeric(20, 10)),
     Column("volatility_mean_30", Numeric(20, 10)),
 
-    # Внешний фактор: последний курс ЦБ с датой не позже candle_date
+    # Внешние факторы. Для каждого берётся последнее значение, уже
+    # опубликованное к концу суток candle_date, и хранится его возраст
     Column("usd_rub", Numeric(20, 6)),
     Column("usd_rub_age_days", Integer),
+    Column("fear_greed", Integer),
+    Column("fear_greed_age_days", Integer),
+    Column("fed_rate", Numeric(10, 4)),
+    Column("fed_rate_age_days", Integer),
 
     # Целевые значения: берутся из candle_date + 1, признаками не служат
     Column("target_volume_btc", Numeric(28, 8)),
@@ -75,19 +81,32 @@ def _mean(values):
     return sum(present) / len(present)
 
 
-# Берём последний курс с датой не позже day и его возраст в днях
-# Поиск идёт только назад: заглядывание вперёд дало бы модели
-# сведения, которых в момент прогноза не существует
-def _rate_lookup(rates, day):
-    chosen = None
-    for rate_date, value in rates:
-        if rate_date <= day:
-            chosen = (rate_date, value)
-        else:
-            break
-    if chosen is None:
-        return None, None
-    return chosen[1], (day - chosen[0]).days
+# Ставка ФРС за день x публикуется на следующий рабочий день.
+# Прогноз строится в конце суток d, поэтому ставку за d ещё не знаем
+def fed_available_from(rate_date):
+    day = rate_date + timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day
+
+
+class AsOf:
+    # Поиск последнего значения, доступного к концу суток day
+    # Поиск идёт только назад: заглядывание вперёд дало бы модели
+    # сведения, которых в момент прогноза не существует
+    def __init__(self, pairs, available=lambda d: d):
+        pairs = sorted(pairs)
+        self.available = [available(d) for d, _ in pairs]
+        self.dates = [d for d, _ in pairs]
+        self.values = [v for _, v in pairs]
+        # Дата доступности монотонна по дате значения, поэтому бинарный поиск
+        # по available корректен
+
+    def lookup(self, day):
+        position = bisect.bisect_right(self.available, day) - 1
+        if position < 0:
+            return None, None
+        return self.values[position], (day - self.dates[position]).days
 
 
 # Перестраиваем витрину из слоя clean в одной транзакции
@@ -102,22 +121,27 @@ def build_mart(engine, now=None):
                    clean_okx.c.close, clean_okx.c.volume_btc)
             .order_by(clean_okx.c.candle_date)
         ))
-        rates = [(r.rate_date, r.rate_per_usd) for r in conn.execute(
-            select(clean_cbr.c.rate_date, clean_cbr.c.rate_per_usd)
-            .order_by(clean_cbr.c.rate_date)
-        )]
+        # Курс ЦБ устанавливается заранее и действует с указанной даты
+        usd_rub = AsOf(conn.execute(
+            select(clean_cbr.c.rate_date, clean_cbr.c.rate_per_usd)).all())
+        # Индекс за сутки d публикуется в начале суток d
+        fear_greed = AsOf(conn.execute(
+            select(clean_fng.c.index_date, clean_fng.c.value)).all())
+        fed_rate = AsOf(conn.execute(
+            select(clean_fred.c.rate_date, clean_fred.c.rate_pct)).all(),
+            available=fed_available_from)
 
         conn.execute(delete(daily_mart))
+        stats = {"rows": 0, "rows_with_target": 0, "rows_with_rate": 0,
+                 "rows_with_fear_greed": 0, "rows_with_fed_rate": 0}
         if not candles:
-            return {"rows": 0, "rows_with_target": 0, "rows_with_rate": 0}
+            return stats
 
         volumes = [row.volume_btc for row in candles]
         volatilities = [parkinson(row.high, row.low) for row in candles]
         by_date = {row.candle_date: i for i, row in enumerate(candles)}
 
-        rows = 0
-        with_target = 0
-        with_rate = 0
+        rows = []
         for i, row in enumerate(candles):
             day = row.candle_date
             values = {
@@ -150,29 +174,30 @@ def build_mart(engine, now=None):
                 values[f"volume_mean_{window}"] = _mean(volumes[start:i])
                 values[f"volatility_mean_{window}"] = _mean(volatilities[start:i])
 
-            rate, age = _rate_lookup(rates, day)
-            values["usd_rub"] = rate
-            values["usd_rub_age_days"] = age
-            with_rate += int(rate is not None)
+            values["usd_rub"], values["usd_rub_age_days"] = usd_rub.lookup(day)
+            values["fear_greed"], values["fear_greed_age_days"] = fear_greed.lookup(day)
+            values["fed_rate"], values["fed_rate_age_days"] = fed_rate.lookup(day)
+            stats["rows_with_rate"] += int(values["usd_rub"] is not None)
+            stats["rows_with_fear_greed"] += int(values["fear_greed"] is not None)
+            stats["rows_with_fed_rate"] += int(values["fed_rate"] is not None)
 
             following = by_date.get(day + timedelta(days=1))
             if following is not None:
                 values["target_volume_btc"] = candles[following].volume_btc
                 values["target_volatility_pk"] = volatilities[following]
-                with_target += 1
+                stats["rows_with_target"] += 1
             else:
                 values["target_volume_btc"] = None
                 values["target_volatility_pk"] = None
+            rows.append(values)
 
-            conn.execute(daily_mart.insert().values(**values))
-            rows += 1
-
-    return {"rows": rows, "rows_with_target": with_target,
-            "rows_with_rate": with_rate}
+        conn.execute(daily_mart.insert(), rows)
+        stats["rows"] = len(rows)
+    return stats
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Построение витрины mart")
     parser.parse_args()
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
