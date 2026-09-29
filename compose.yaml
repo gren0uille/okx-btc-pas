@@ -1,3 +1,12 @@
+# Вся система поднимается одной командой: docker compose up -d
+#   db                 — PostgreSQL со слоями raw, clean, mart, hist, meta
+#   pipeline           — конвейер: запуск сразу, затем ежедневно в 00:30 UTC
+#   superset           — дашборды, http://localhost:8088
+#   superset-bootstrap — однократно создаёт подключение, наборы и дашборды
+
+x-db-url: &db-url
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pas_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pas}
+
 services:
   db:
     image: postgres:16
@@ -15,13 +24,52 @@ services:
       timeout: 3s
       retries: 10
 
-  loader:
+  pipeline:
     build: .
+    command: ["python", "-m", "okx_btc_pas.pipeline", "--daily-at", "00:30"]
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pas_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pas}
+      <<: *db-url
+      BI_READER_PASSWORD: ${BI_READER_PASSWORD:?Set BI_READER_PASSWORD in .env}
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+
+  superset:
+    build: ./superset
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Set SUPERSET_SECRET_KEY in .env}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD in .env}
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    volumes:
+      - superset_home:/app/superset_home
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8088/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  superset-bootstrap:
+    build: .
+    command: ["python", "superset/bootstrap.py"]
+    environment:
+      <<: *db-url
+      SUPERSET_URL: http://superset:8088
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+      BI_READER_PASSWORD: ${BI_READER_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pas}
+    depends_on:
+      superset:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres_data:
+  superset_home:

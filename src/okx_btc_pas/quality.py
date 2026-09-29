@@ -101,11 +101,14 @@ def check_reconciliation(ck):
 
 
 # Ссылочная целостность: каждая строка слоя опирается на строку предыдущего
-def check_references(ck):
-    pairs = [
-        (clean_okx.c.candle_date, raw_okx.c.candle_date, clean_okx, raw_okx),
-        (daily_mart.c.candle_date, clean_okx.c.candle_date, daily_mart, clean_okx),
-    ]
+# После clean проверяется связь clean → raw, после витрины — витрина → clean:
+# до перестроения витрина ещё старая, и проверять её рано
+def check_references(ck, layer):
+    pairs = {
+        "clean": [(clean_okx.c.candle_date, raw_okx.c.candle_date, clean_okx, raw_okx)],
+        "mart": [(daily_mart.c.candle_date, clean_okx.c.candle_date, daily_mart,
+                  clean_okx)],
+    }[layer]
     for child_column, parent_column, child, parent in pairs:
         orphans = ck.conn.execute(
             select(func.count()).select_from(child).where(
@@ -183,7 +186,7 @@ def run_source_checks(engine, run_id=None, now=None):
         check_uniqueness(ck)
         check_reconciliation(ck)
         check_types(ck)
-        check_references(ck)
+        check_references(ck, "clean")
     return _summary(ck)
 
 
@@ -193,7 +196,7 @@ def run_mart_checks(engine, run_id=None, now=None):
     with engine.begin() as conn:
         ck = Checker(conn, moment, run_id)
         check_mart(ck, moment.date())
-        check_references(ck)
+        check_references(ck, "mart")
     return _summary(ck)
 
 

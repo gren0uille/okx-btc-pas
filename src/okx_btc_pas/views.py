@@ -23,6 +23,13 @@ VIEWS = {
                avg(m.volatility_pk) OVER w30::float AS volatility_ma30,
                m.fear_greed,
                f.classification AS fear_greed_class,
+               -- Номер в начале задаёт порядок на графике: от страха к жадности
+               CASE f.classification
+                    WHEN 'Extreme Fear' THEN '1 Крайний страх'
+                    WHEN 'Fear' THEN '2 Страх'
+                    WHEN 'Neutral' THEN '3 Нейтрально'
+                    WHEN 'Greed' THEN '4 Жадность'
+                    WHEN 'Extreme Greed' THEN '5 Крайняя жадность' END AS fear_greed_band,
                m.fed_rate::float AS fed_rate,
                m.usd_rub::float AS usd_rub,
                extract(year FROM m.candle_date)::int AS year,
