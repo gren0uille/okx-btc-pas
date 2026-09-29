@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, event
 import okx_btc_pas.cleaning  # noqa: F401  регистрирует таблицы слоя clean
 import okx_btc_pas.history  # noqa: F401
 import okx_btc_pas.mart  # noqa: F401
+import okx_btc_pas.lineage  # noqa: F401
 import okx_btc_pas.model  # noqa: F401
 from okx_btc_pas.db import SCHEMAS, initialize_database
 
